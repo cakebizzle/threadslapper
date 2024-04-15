@@ -3,7 +3,7 @@ import os
 import sys
 from logging.handlers import TimedRotatingFileHandler
 from typing import Annotated, Any, Iterator, Literal, Tuple
-
+from pathlib import Path
 import yaml
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, SecretStr
 from pydantic_extra_types import color
@@ -93,6 +93,7 @@ class RssFeedToChannel(BaseModel):
     rss_episode_key: Annotated[str, AfterValidator(validate_string)] = "itunes_episode"
     rss_episode_url_key: Annotated[str, AfterValidator(validate_string)] = "link"
     rss_title_key: Annotated[str, AfterValidator(validate_string)] = "itunes_title"
+    rss_summary_key: Annotated[str, AfterValidator(validate_string)] = "subtitle"
     rss_description_key: Annotated[str, AfterValidator(validate_string)] = "subtitle"
     rss_image_key: Annotated[str, AfterValidator(validate_string)] | None = "image"
     rss_tag_key: Annotated[str, AfterValidator(validate_string)] = "tags"
@@ -132,6 +133,10 @@ class RssFeedToChannel(BaseModel):
             return [(channel.get("announce_channel", -1), channel.get("channel", -1)) for channel in self.channel_list]
         else:
             return [(self.announce_channel_id, self.channel_id)]
+
+    
+    def get_tmp_feed_path(self, logging_path: str) -> Path:
+        return Path(os.path.join(logging_path, f"tmp_{self.title}_curep{self.current_episode}.json"))
 
 
 class Settings(BaseSettings):

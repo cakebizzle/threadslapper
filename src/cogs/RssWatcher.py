@@ -7,6 +7,8 @@ Watches RSS feeds for new episodes then posts a discord message/thread/post.
 import traceback
 from datetime import datetime
 from typing import Any
+from pathlib import Path
+import json
 
 import feedparser
 from discord import Bot, ChannelType, Color, Embed, ForumChannel, TextChannel, Thread
@@ -19,6 +21,8 @@ from threadslapper.settings import RssFeedToChannel, Settings
 settings = Settings()
 log = settings.create_logger('RssWatcher')
 
+class MalformedFeedDecodeError(Exception):
+    pass
 
 class ChannelData(BaseModel):
     channel_title: str
@@ -145,12 +149,21 @@ class RssWatcher(commands.Cog):
             channel_title=channel_info.get(rss.rss_channel_title_key, ''),
         )
 
+    def _get_rss_feedparser(self, rss: RssFeedToChannel) -> dict:
+        data = dict(feedparser.parse(rss.rss_feed))
+        with rss.get_tmp_feed_path().open(mode="w") as f:
+            json.dump(data, f, indent=2)
+        return data
+
     def _get_latest_episode_data(self, rss: RssFeedToChannel) -> EpisodeData:
         """Gets the data for the latest episode"""
-        data = dict(feedparser.parse(rss.rss_feed))
+        data = self._get_rss_feedparser(rss)
 
         channel_info = self._get_channel_info(rss, data.get('feed', {}))
-        latest_episode = data.get('entries', [])[rss.get_latest_episode_index_position()]
+        episode_list = data.get('entries', [])
+        if len(episode_list) == 0:
+            raise MalformedFeedDecodeError()
+        latest_episode = episode_list[rss.get_latest_episode_index_position()]
 
         latest_ep_id = latest_episode.get(rss.rss_episode_key, 0)
         if rss.override_episode_numbers:
@@ -287,6 +300,82 @@ class RssWatcher(commands.Cog):
             return latest_episode
         return None
 
+    async def _check_rss_feed(self, feed: RssFeedToChannel):
+        if (latest_episode := self.check_rss(rss=feed)) is not None:
+            log.info(f"{feed.title}: New episode found: {latest_episode.number}")
+
+            title = latest_episode.get_title(feed.title_prefix, feed.override_episode_prepend_title)
+            channel_embed = self.get_embed(feed, latest_episode)
+            announce_embed = self.get_embed(feed, latest_episode, truncate=True)
+
+            thread = None
+            for index, (_announce_channel, _channel) in enumerate(
+                feed.get_channels(
+                    settings.override_announce_channel_id,
+                    settings.override_channel_id,
+                )
+            ):
+                channel = self.bot.get_channel(_channel)
+                if not channel:
+                    log.info(f"{feed.title}-{index}: Channel (id={_channel}) not found! Skipping.")
+                    continue
+                log.info(
+                    f"{feed.title}-{index}: Found channel (id={_channel}): {channel.guild.name}/{channel.name}"
+                )
+
+                announce_channel = self.bot.get_channel(_announce_channel)
+                if announce_channel:
+                    log.info(
+                        f"{feed.title}-{index}: Found channel (id={_announce_channel}): {channel.guild.name}/{announce_channel.name}"
+                    )
+
+                if isinstance(channel, TextChannel):
+                    thread = await self.add_text_thread(
+                        channel=channel,
+                        title=title,
+                        embed=channel_embed,
+                        latest_episode_number=latest_episode.number,
+                        feed_title=feed.title,
+                        override_episode_check=feed.override_episode_check,
+                    )
+
+                elif isinstance(channel, ForumChannel):
+                    # If the channel is a Forum, spawn a post (that is actually a thread)
+                    thread = await self.add_forum_thread(
+                        channel=channel,
+                        title=title,
+                        embed=channel_embed,
+                        latest_episode_number=latest_episode.number,
+                        feed_title=feed.title,
+                        override_episode_check=feed.override_episode_check,
+                    )
+
+                if thread:
+                    await self.create_announcement(
+                        announce_channel=announce_channel,
+                        embed=announce_embed,
+                        feed_title=feed.title,
+                        announcement=title,
+                        message=thread,
+                    )
+
+                # Add subscribers belonging to $ROLE to thread
+                if (role := feed.subscriber_role_id) is not None:
+                    if members := thread.guild.get_role(role):
+                        for member in members.members:
+                            await thread.add_user(member)
+
+        else:
+            log.debug(f'{feed.title}: No updates.')
+
+    def dump_feed(self, feed: RssFeedToChannel):
+        iterator = 0
+        filename = Path(settings.log_path) / f"{datetime.today().strftime('%Y%m%d')}_error-{iterator}_{feed.title}.json"
+        while filename.exists():
+            iterator += 1
+            filename = Path(settings.log_path) / f"{datetime.today().strftime('%Y%m%d')}_error-{iterator}_{feed.title}.json"
+        feed.get_tmp_feed_path().rename(filename)
+
     @tasks.loop(minutes=settings.check_interval_min)
     async def check_rss_feed(self):
         """Actual bot loop"""
@@ -302,72 +391,11 @@ class RssWatcher(commands.Cog):
                 continue
 
             try:
-                if (latest_episode := self.check_rss(rss=feed)) is not None:
-                    log.info(f"{feed.title}: New episode found: {latest_episode.number}")
-
-                    title = latest_episode.get_title(feed.title_prefix, feed.override_episode_prepend_title)
-                    channel_embed = self.get_embed(feed, latest_episode)
-                    announce_embed = self.get_embed(feed, latest_episode, truncate=True)
-
-                    thread = None
-                    for index, (_announce_channel, _channel) in enumerate(
-                        feed.get_channels(
-                            settings.override_announce_channel_id,
-                            settings.override_channel_id,
-                        )
-                    ):
-                        channel = self.bot.get_channel(_channel)
-                        if not channel:
-                            log.info(f"{feed.title}-{index}: Channel (id={_channel}) not found! Skipping.")
-                            continue
-                        log.info(
-                            f"{feed.title}-{index}: Found channel (id={_channel}): {channel.guild.name}/{channel.name}"
-                        )
-
-                        announce_channel = self.bot.get_channel(_announce_channel)
-                        if announce_channel:
-                            log.info(
-                                f"{feed.title}-{index}: Found channel (id={_announce_channel}): {channel.guild.name}/{announce_channel.name}"
-                            )
-
-                        if isinstance(channel, TextChannel):
-                            thread = await self.add_text_thread(
-                                channel=channel,
-                                title=title,
-                                embed=channel_embed,
-                                latest_episode_number=latest_episode.number,
-                                feed_title=feed.title,
-                                override_episode_check=feed.override_episode_check,
-                            )
-
-                        elif isinstance(channel, ForumChannel):
-                            # If the channel is a Forum, spawn a post (that is actually a thread)
-                            thread = await self.add_forum_thread(
-                                channel=channel,
-                                title=title,
-                                embed=channel_embed,
-                                latest_episode_number=latest_episode.number,
-                                feed_title=feed.title,
-                                override_episode_check=feed.override_episode_check,
-                            )
-
-                        if thread:
-                            await self.create_announcement(
-                                announce_channel=announce_channel,
-                                embed=announce_embed,
-                                feed_title=feed.title,
-                                announcement=title,
-                                message=thread,
-                            )
-
-                        # Add subscribers belonging to $ROLE to thread
-                        if (role := feed.subscriber_role_id) is not None:
-                            if members := thread.guild.get_role(role):
-                                for member in members.members:
-                                    await thread.add_user(member)
-
-                else:
-                    log.debug(f'{feed.title}: No updates.')
+                self._check_rss_feed(feed=feed)
+            except MalformedFeedDecodeError as e:
+                log.critical(f'{feed.title}: {e}')
+                log.error(traceback.format_exc())
+                self.dump_feed(feed)
             except Exception as e:
                 feed.error_count += 1
                 log.critical(f'{feed.title}: {e}')
