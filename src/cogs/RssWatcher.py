@@ -151,7 +151,7 @@ class RssWatcher(commands.Cog):
 
     def _get_rss_feedparser(self, rss: RssFeedToChannel) -> dict:
         data = dict(feedparser.parse(rss.rss_feed))
-        with rss.get_tmp_feed_path().open(mode="w") as f:
+        with rss.get_tmp_feed_path(settings.log_path).open(mode="w") as f:
             json.dump(data, f, indent=2)
         return data
 
@@ -374,7 +374,7 @@ class RssWatcher(commands.Cog):
         while filename.exists():
             iterator += 1
             filename = Path(settings.log_path) / f"{datetime.today().strftime('%Y%m%d')}_error-{iterator}_{feed.title}.json"
-        feed.get_tmp_feed_path().rename(filename)
+        feed.get_tmp_feed_path(settings.log_path).rename(filename)
 
     @tasks.loop(minutes=settings.check_interval_min)
     async def check_rss_feed(self):
@@ -391,7 +391,7 @@ class RssWatcher(commands.Cog):
                 continue
 
             try:
-                self._check_rss_feed(feed=feed)
+                await self._check_rss_feed(feed=feed)
             except MalformedFeedDecodeError as e:
                 log.critical(f'{feed.title}: {e}')
                 log.error(traceback.format_exc())
