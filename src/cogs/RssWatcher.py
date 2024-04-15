@@ -4,11 +4,11 @@ RssWatcher,
 Watches RSS feeds for new episodes then posts a discord message/thread/post.
 """
 
+import json
 import traceback
 from datetime import datetime
-from typing import Any
 from pathlib import Path
-import json
+from typing import Any
 
 import feedparser
 from discord import Bot, ChannelType, Color, Embed, ForumChannel, TextChannel, Thread
@@ -21,8 +21,10 @@ from threadslapper.settings import RssFeedToChannel, Settings
 settings = Settings()
 log = settings.create_logger('RssWatcher')
 
+
 class MalformedFeedDecodeError(Exception):
     pass
+
 
 class ChannelData(BaseModel):
     channel_title: str
@@ -319,9 +321,7 @@ class RssWatcher(commands.Cog):
                 if not channel:
                     log.info(f"{feed.title}-{index}: Channel (id={_channel}) not found! Skipping.")
                     continue
-                log.info(
-                    f"{feed.title}-{index}: Found channel (id={_channel}): {channel.guild.name}/{channel.name}"
-                )
+                log.info(f"{feed.title}-{index}: Found channel (id={_channel}): {channel.guild.name}/{channel.name}")
 
                 announce_channel = self.bot.get_channel(_announce_channel)
                 if announce_channel:
@@ -373,7 +373,9 @@ class RssWatcher(commands.Cog):
         filename = Path(settings.log_path) / f"{datetime.today().strftime('%Y%m%d')}_error-{iterator}_{feed.title}.json"
         while filename.exists():
             iterator += 1
-            filename = Path(settings.log_path) / f"{datetime.today().strftime('%Y%m%d')}_error-{iterator}_{feed.title}.json"
+            filename = (
+                Path(settings.log_path) / f"{datetime.today().strftime('%Y%m%d')}_error-{iterator}_{feed.title}.json"
+            )
         feed.get_tmp_feed_path(settings.log_path).rename(filename)
 
     @tasks.loop(minutes=settings.check_interval_min)
