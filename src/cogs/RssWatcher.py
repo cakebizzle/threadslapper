@@ -47,11 +47,14 @@ class EpisodeData(ChannelData):
 
         If truncate=true, it will cut the description at the first double line-return.
         """
+        if not self.description:
+            return "No description provided"
         desc = md(self.description)
 
         if truncate:
-            first_line_break = desc.index("\n\n")
-            return desc[:first_line_break]
+            if "\n\n" in desc:
+                first_line_break = desc.index("\n\n")
+                return desc[:first_line_break]
         if len(desc) > 2000:
             desc = f"{desc[:1997]}..."
 
@@ -151,10 +154,13 @@ class RssWatcher(commands.Cog):
             channel_title=channel_info.get(rss.rss_channel_title_key, ''),
         )
 
-    def _get_rss_feedparser(self, rss: RssFeedToChannel) -> dict:
+    def _get_rss_feedparser(self, rss: RssFeedToChannel) -> dict | None:
         data = dict(feedparser.parse(rss.rss_feed))
         with rss.get_tmp_feed_path(settings.log_path).open(mode="w") as f:
-            json.dump(data, f, indent=2)
+            if isinstance(data, dict):
+                json.dump(data, f, indent=2)
+            else:
+                f.write(str(data))
         return data
 
     def _get_latest_episode_data(self, rss: RssFeedToChannel) -> EpisodeData:
