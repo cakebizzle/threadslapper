@@ -138,9 +138,9 @@ class RssFeedToChannel(BaseModel):
     def get_tmp_feed_path(self, logging_path: str) -> Path:
         iterator = 0
         path = Path(logging_path) / f"tmp_{self.title}_curep{self.current_episode}_{iterator}.json"
-        while path.exists():
-            iterator += 1
-            path = Path(logging_path) / f"tmp_{self.title}_curep{self.current_episode}_{iterator}.json"
+        # while path.exists():
+        #     iterator += 1
+        #     path = Path(logging_path) / f"tmp_{self.title}_curep{self.current_episode}_{iterator}.json"
         return path
 
 
